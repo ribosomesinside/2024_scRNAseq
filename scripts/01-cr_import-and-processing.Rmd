@@ -1,0 +1,127 @@
+---
+title: "scRNAseq_wt"
+author: "Masha"
+date: "2024-06-13"
+output: html_document
+---
+Here is the data set from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE155543. They performed scRNAseq on 2 stages of *Drosophila melanogaster* larval development: 96h and 120h after egg layering (96H and 120H) with 2 replicates each. They used OregonR strain for that, which is the wild type strain, without any cassets inserted. For now, I am interested in 96H and will be analysing this time point first.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE)
+```
+
+
+```{r library setup}
+#install.packages('Seurat')
+library(Seurat)
+library(here)
+library(readr)
+library(tidyverse)
+library(org.Dm.eg.db)
+```
+
+## Read data
+
+```{r importing, include=FALSE}
+d96h_h1 <-Read10X("../data/GSE155543_RAW/Dros96HH1/")
+```
+
+
+## Make a seurat object
+
+```{r}
+d96h_h1o<-CreateSeuratObject(counts = d96h_h1, project = "r1_96h", min.cells = 3, min.features = 200)
+nrow(d96h_h1o)
+```
+
+```{r IDs-to-symbols}
+gene_ids <-rownames(d96h_h1o)
+#is.na(gene_ids) %>% sum() this to check whether any issues with rownames
+gene_symbols<-  mapIds(org.Dm.eg.db, keys = Features(d96h_h1o), keytype = "FLYBASE", column="SYMBOL")
+
+rownames(d96h_h1o) <- gene_symbols
+```
+
+## Estimating the ratio of mitochondrial genes.
+
+```{r mito}
+# outlook on the mitochondrial genes in the genome annotation. There are 87 of the corresponding gene names
+mt_genes<-grepl("^m[A-Z]", gene_symbols)# %>% sum()
+gene_symbols[mt_genes]
+
+#Assigning the mitochondrial genes and calculating the percentage in the cells
+d96h_h1o[["percent.mt"]] <- PercentageFeatureSet(d96h_h1o, pattern = "^m[A-Z]")
+
+#Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
+VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r QC-mito}
+#Here we see that the number of counts positively correlates with the number of mito genes. Thus, It is not clear to me where to set a threshold, definetely can be 0.9, but could it be lower?
+plot1 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+```{r}
+#Here is very concervative filtering
+d96h_h1o <- subset(d96h_h1o, subset = nFeature_RNA > 1000 & percent.mt < 0.9)
+```
+
+## Normalising the data
+
+```{r norm}
+#Performing conventional normalisation
+d96h_h1o <- NormalizeData(d96h_h1o, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+## Identification of highly variable features
+
+```{r}
+# the default wa 2000 genes for human blood cells
+d96h_h1o <- FindVariableFeatures(d96h_h1o, selection.method = "vst", nfeatures = 1000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(d96h_h1o), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(d96h_h1o)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1
+plot2
+```
+
+## Scaling the data and dimentional reduction
+
+```{r scaling}
+d96h_h1o <- ScaleData(d96h_h1o)
+```
+
+```{r pca}
+d96h_h1o <- RunPCA(d96h_h1o, features = VariableFeatures(object = d96h_h1o))
+print(d96h_h1o[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(d96h_h1o, dims = 1:2, reduction = "pca")
+DimPlot(d96h_h1o, reduction = "pca") + NoLegend()
+```
+
+```{r hm}
+DimHeatmap(d96h_h1o, dims = 10:20, cells = 500, balanced = TRUE)
+```
+
+## Determine dimentionality of the dataset
+```{r}
+ElbowPlot(d96h_h1o)
+```
+
+```{r}
+d96h_h1o <- FindNeighbors(d96h_h1o, dims = 1:12)
+d96h_h1o <- FindClusters(d96h_h1o, resolution = 0.5)
+```
+```{r umap}
+d96h_h1o <- RunUMAP(d96h_h1o, dims = 1:10)
+DimPlot(d96h_h1o, reduction = "umap")
+```
+
+```{r}
+FeaturePlot(d96h_h1o, features = c("SPARC", "Fas3", "ct", "zfh2", "nub", "vg", "brk", "dpp"))
+```
+
