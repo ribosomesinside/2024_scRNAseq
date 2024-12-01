@@ -18,6 +18,8 @@ library(here)
 library(readr)
 library(tidyverse)
 library(org.Dm.eg.db)
+#remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
+library(DoubletFinder)
 ```
 
 ## Read data
@@ -60,11 +62,13 @@ VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol
 #Here we see that the number of counts positively correlates with the number of mito genes. Thus, It is not clear to me where to set a threshold, definetely can be 0.9, but could it be lower?
 plot1 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "percent.mt")
 plot2 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-plot1 + plot2
+plot1 
+plot2
 ```
 ```{r}
 #Here is very concervative filtering
 d96h_h1o <- subset(d96h_h1o, subset = nFeature_RNA > 1000 & percent.mt < 0.9)
+nrow(d96h_h1o)
 ```
 
 ## Normalising the data
@@ -77,7 +81,7 @@ d96h_h1o <- NormalizeData(d96h_h1o, normalization.method = "LogNormalize", scale
 
 ```{r}
 # the default wa 2000 genes for human blood cells
-d96h_h1o <- FindVariableFeatures(d96h_h1o, selection.method = "vst", nfeatures = 1000)
+d96h_h1o <- FindVariableFeatures(d96h_h1o, selection.method = "vst")
 
 # Identify the 10 most highly variable genes
 top10 <- head(VariableFeatures(d96h_h1o), 10)
@@ -96,7 +100,7 @@ d96h_h1o <- ScaleData(d96h_h1o)
 ```
 
 ```{r pca}
-d96h_h1o <- RunPCA(d96h_h1o, features = VariableFeatures(object = d96h_h1o))
+d96h_h1o <- RunPCA(d96h_h1o, features = VariableFeatures(object = d96h_h1o), npcs =30)
 print(d96h_h1o[["pca"]], dims = 1:5, nfeatures = 5)
 
 VizDimLoadings(d96h_h1o, dims = 1:2, reduction = "pca")
@@ -114,14 +118,169 @@ ElbowPlot(d96h_h1o)
 
 ```{r}
 d96h_h1o <- FindNeighbors(d96h_h1o, dims = 1:12)
-d96h_h1o <- FindClusters(d96h_h1o, resolution = 0.5)
+d96h_h1o <- FindClusters(d96h_h1o, resolution = 2)
 ```
 ```{r umap}
-d96h_h1o <- RunUMAP(d96h_h1o, dims = 1:10)
+d96h_h1o <- RunUMAP(d96h_h1o, dims = 1:12)
 DimPlot(d96h_h1o, reduction = "umap")
 ```
 
 ```{r}
 FeaturePlot(d96h_h1o, features = c("SPARC", "Fas3", "ct", "zfh2", "nub", "vg", "brk", "dpp"))
+```
+
+Remove clusters with low quality cells
+```{r}
+# Extract the raw count matrix
+raw_counts <- GetAssayData(d96h_h1o, assay = "RNA", slot = "counts")
+
+
+genes_per_cell <- colSums(raw_counts > 0)
+```
+
+```{r}
+# Create a dataframe with cluster identity and number of expressed genes per cell
+cluster_gene_data <- data.frame(Cluster = Idents(d96h_h1o), GenesPerCell = genes_per_cell)
+
+# Calculate the mean number of genes per cluster
+cluster_gene_summary <- aggregate(GenesPerCell ~ Cluster, data = cluster_gene_data, FUN = mean)
+sd_genes <- sd(genes_per_cell)
+mean_genes<- mean(genes_per_cell)
+threshold <- mean_genes-sd_genes
+```
+
+```{r}
+low_gene_clusters <- subset(cluster_gene_summary, GenesPerCell < threshold)
+
+d96_filtered <- subset(d96h_h1o, idents = low_gene_clusters$Cluster, invert = TRUE)
+```
+
+```{r}
+d96_filtered <- RunUMAP(d96_filtered, dims = 1:12)
+DimPlot(d96_filtered, reduction = "umap")
+```
+```{r}
+whichCells<- function(data, x){
+  temp<-WhichCells(data, idents = x)
+  DimPlot(data, cells.highlight = temp)
+}
+#a vector with removed cluster names
+active_clusters<-d96_filtered@active.ident %>% levels() %>% as.numeric()
+
+# Apply the function for each cluster
+plots <- lapply(active_clusters, function(x) whichCells(d96_filtered, x))
+
+# Display all plots
+print(plots)
+#this is the cluster to be removed
+print(plots[20])
+
+#will give you the ids of all cells within a cluster which you can identify however you want
+```
+
+```{r}
+#removing cluster n21 as the one containing cells in both groups
+d96_filtered2 <- subset(d96_filtered, idents = 21, invert = TRUE)
+d96_filtered2@active.ident %>% levels()
+#how do I extract the cluster identity without counting the plots?
+```
+
+```{r}
+d96_filtered2 <- RunUMAP(d96_filtered2, dims = 1:12)
+DimPlot(d96_filtered2, reduction = "umap")
+```
+
+```{r}
+active_clusters2<-d96_filtered2@active.ident %>% levels() %>% as.numeric()
+plots <- lapply(active_clusters2, function(x) whichCells(d96_filtered2,x))
+print(plots)
+```
+
+```{r}
+#removing duplicates?
+
+## pK Identification (no ground-truth) ----------------------------------------------------------------------------------
+sweep.res.list <- paramSweep(d96_filtered, PCs = 1:12, sct = FALSE)
+sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)
+bcmvn <- find.pK(sweep.stats)
+```
+
+
+```{r}
+#As I removed 4 clusters, do I need to re-run PCA? Do I need to re-mormalise?
+FeaturePlot(d96_filtered2, features = c("SPARC", "Fas3", "wat", "tpr", "regucalcin", "He"))
+```
+```{r}
+d96_filtered2 <- ScaleData(d96_filtered2)
+d96_filtered2 <- RunPCA(d96_filtered2, features = VariableFeatures(object = d96_filtered2), npcs =30)
+print(d96_filtered2[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(d96_filtered2, dims = 1:2, reduction = "pca")
+DimPlot(d96_filtered2, reduction = "pca") + NoLegend()
+```
+```{r}
+ElbowPlot(d96_filtered2)
+```
+```{r}
+d96_filtered2 <- FindNeighbors(d96_filtered2, dims = 1:12)
+d96_filtered2 <- FindClusters(d96_filtered2, resolution = 2)
+```
+```{r}
+d96_filtered2 <- RunUMAP(d96_filtered2, dims = 1:12)
+DimPlot(d96_filtered2, reduction = "umap")
+```
+```{r}
+active_clusters3<-d96_filtered2@active.ident %>% levels() %>% as.numeric()
+plots <- lapply(active_clusters3, function(x) whichCells(d96_filtered2,x))
+print(plots)
+```
+
+```{r}
+#re-assigning clusters to two big groups: epithelial and AMPs
+
+new_ids<-c("AMP","AMP","AMP","AMP","epithelial","AMP","epithelial","AMP","epithelial","AMP", "epithelial","AMP", "AMP","AMP", "AMP", "epithelial","epithelial", "AMP", "AMP", "AMP", "epithelial","AMP","AMP", "epithelial","AMP","AMP")
+length(new_ids)
+names(new_ids)<-levels(d96_filtered2)
+d96_filtered2 <- RenameIdents(d96_filtered2, new_ids)
+DimPlot(d96_filtered2, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+```
+
+```{r}
+#do I need to recalculate all of those things?
+d96_epithelial<- subset(d96_filtered2, idents ="epithelial")
+d96_epithelial[["percent.mt"]] <- PercentageFeatureSet(d96_epithelial, pattern = "^m[A-Z]")
+
+#Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
+VlnPlot(d96_epithelial, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r}
+epithelial_genes<-FetchData(object = d96_epithelial, vars = "nFeature_RNA", layer = "counts")
+epi_mean <- mean(epithelial_genes$nFeature_RNA)
+epi_sd <- sd(epithelial_genes$nFeature_RNA)
+d96_epi_filtered<-subset(d96_epithelial, subset=nFeature_RNA>(epi_mean-1.5*epi_sd)&nFeature_RNA<(epi_mean+1.5*epi_sd))
+VlnPlot(d96_epi_filtered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+
+```{r}
+d96_epi_filtered <- ScaleData(d96_epi_filtered)
+d96_epi_filtered <- RunPCA(d96_epi_filtered, features = VariableFeatures(object = d96_epi_filtered))
+print(d96_epi_filtered[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(d96_epi_filtered, dims = 1:2, reduction = "pca")
+DimPlot(d96_epi_filtered, reduction = "pca") + NoLegend()
+ElbowPlot(d96_epi_filtered)
+RunUMAP(d96_epi_filtered, dims = 1:12)
+DimPlot(d96_epi_filtered, reduction = "umap")
+```
+
+
+
+```{r}
+#extracting brk counts
+brk<-FetchData(d96_epi_filtered, vars = "brk", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+hist(brk[,"brk"], 50)
 ```
 
