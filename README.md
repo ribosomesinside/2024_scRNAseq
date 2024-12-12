@@ -1,5 +1,5 @@
 Project's learning objectives:
-1. Quantifying scRNAseq data (seurat)
+1. Quantifying scRNAseq data
 2. Learning how to use and troubleshoot nf-core pipelines (parameters, versions)
 3. Parsing and wrangling data formats
 4. Analysis structure:
