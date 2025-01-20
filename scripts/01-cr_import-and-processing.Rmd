@@ -18,8 +18,7 @@ library(here)
 library(readr)
 library(tidyverse)
 library(org.Dm.eg.db)
-#remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
-library(DoubletFinder)
+library(loupeR)
 ```
 
 ## Read data
@@ -28,12 +27,23 @@ library(DoubletFinder)
 d96h_h1 <-Read10X("../data/GSE155543_RAW/Dros96HH1/")
 ```
 
+```{r}
+library(SingleCellExperiment)
+suppressPackageStartupMessages(library(scDblFinder))
+str(d96h_h1)
+sce <- SingleCellExperiment(assays = list(counts = d96h_h1))
+sce <- scDblFinder(sce)
+sce$scDblFinder.score
+sce$scDblFinder.class
+str(sce)
+```
+
 
 ## Make a seurat object
 
 ```{r}
 d96h_h1o<-CreateSeuratObject(counts = d96h_h1, project = "r1_96h", min.cells = 3, min.features = 200)
-nrow(d96h_h1o)
+nrow(d96h_h1o) #number of genes, for cells there is a command Cells
 ```
 
 ```{r IDs-to-symbols}
@@ -42,6 +52,7 @@ gene_ids <-rownames(d96h_h1o)
 gene_symbols<-  mapIds(org.Dm.eg.db, keys = Features(d96h_h1o), keytype = "FLYBASE", column="SYMBOL")
 
 rownames(d96h_h1o) <- gene_symbols
+head(rownames(d96h_h1o))
 ```
 
 ## Estimating the ratio of mitochondrial genes.
@@ -49,13 +60,23 @@ rownames(d96h_h1o) <- gene_symbols
 ```{r mito}
 # outlook on the mitochondrial genes in the genome annotation. There are 87 of the corresponding gene names
 mt_genes<-grepl("^m[A-Z]", gene_symbols)# %>% sum()
-gene_symbols[mt_genes]
+table_mt<-gene_symbols[mt_genes] %>% as.tibble() %>% filter(value != "mTor")
+head(table_mt) 
+
+#write_csv(table_mt, "mito_genes.csv", col_names = FALSE)
 
 #Assigning the mitochondrial genes and calculating the percentage in the cells
 d96h_h1o[["percent.mt"]] <- PercentageFeatureSet(d96h_h1o, pattern = "^m[A-Z]")
 
 #Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
-VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+```{r}
+# Should return TRUE
+all.equal(colnames(sce), colnames(d96h_h1o))
+doublet_info <- sce$scDblFinder.class
+d96h_h1o <- AddMetaData(d96h_h1o, metadata = doublet_info, col.name = "scDblFinder.class")
+VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), group.by = "scDblFinder.class")
 ```
 
 ```{r QC-mito}
@@ -65,9 +86,26 @@ plot2 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "nFeature_
 plot1 
 plot2
 ```
+
+```{r ribo}
+rb_genes<-grepl("^Rp[A-Z]", gene_symbols)# %>% sum()
+gene_symbols[rb_genes]
+
+d96h_h1o[["percent.rb"]] <- PercentageFeatureSet(d96h_h1o, pattern = "^Rp[A-Z]")
+
+#Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
+VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r}
+library(scDblFinder)
+
+```
+
+
 ```{r}
 #Here is very concervative filtering
-d96h_h1o <- subset(d96h_h1o, subset = nFeature_RNA > 1000 & percent.mt < 0.9)
+d96h_h1o <- subset(d96h_h1o, subset = nFeature_RNA > 1000 & nCount_RNA<50000 & percent.mt < 0.9)
 nrow(d96h_h1o)
 ```
 
@@ -75,7 +113,13 @@ nrow(d96h_h1o)
 
 ```{r norm}
 #Performing conventional normalisation
+anyDuplicated(rownames(d96h_h1o))
+duplicates <- rownames(d96h_h1o)[duplicated(rownames(d96h_h1o))]
+print(duplicates)
+d96h_h1o <- d96h_h1o[!duplicated(rownames(d96h_h1o)), ]
+
 d96h_h1o <- NormalizeData(d96h_h1o, normalization.method = "LogNormalize", scale.factor = 10000)
+
 ```
 ## Identification of highly variable features
 
@@ -104,7 +148,7 @@ d96h_h1o <- RunPCA(d96h_h1o, features = VariableFeatures(object = d96h_h1o), npc
 print(d96h_h1o[["pca"]], dims = 1:5, nfeatures = 5)
 
 VizDimLoadings(d96h_h1o, dims = 1:2, reduction = "pca")
-DimPlot(d96h_h1o, reduction = "pca") + NoLegend()
+DimPlot(d96h_h1o, group.by="scDblFinder.class", reduction = "pca") + NoLegend()
 ```
 
 ```{r hm}
@@ -118,83 +162,179 @@ ElbowPlot(d96h_h1o)
 
 ```{r}
 d96h_h1o <- FindNeighbors(d96h_h1o, dims = 1:12)
-d96h_h1o <- FindClusters(d96h_h1o, resolution = 2)
+d96h_h1o <- FindClusters(d96h_h1o, resolution = 0.1)
 ```
 ```{r umap}
 d96h_h1o <- RunUMAP(d96h_h1o, dims = 1:12)
 DimPlot(d96h_h1o, reduction = "umap")
+DimPlot(d96h_h1o, split.by="scDblFinder.class", reduction = "umap")
 ```
 
 ```{r}
-FeaturePlot(d96h_h1o, features = c("SPARC", "Fas3", "ct", "zfh2", "nub", "vg", "brk", "dpp"))
+FeaturePlot(d96h_h1o, split.by = "scDblFinder.class", features = c("SPARC", "Fas3", "eyg", "zfh2", "nub"))
 ```
 
-Remove clusters with low quality cells
+<!-- Remove clusters with low quality cells -->
+<!-- ```{r} -->
+<!-- # Extract the raw count matrix -->
+<!-- raw_counts <- GetAssayData(d96h_h1o, assay = "RNA", slot = "counts") -->
+
+
+<!-- genes_per_cell <- colSums(raw_counts > 0) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # Create a dataframe with cluster identity and number of expressed genes per cell -->
+<!-- cluster_gene_data <- data.frame(Cluster = Idents(d96h_h1o), GenesPerCell = genes_per_cell) -->
+
+<!-- # Calculate the mean number of genes per cluster -->
+<!-- cluster_gene_summary <- aggregate(GenesPerCell ~ Cluster, data = cluster_gene_data, FUN = mean) -->
+<!-- sd_genes <- sd(genes_per_cell) -->
+<!-- mean_genes<- mean(genes_per_cell) -->
+<!-- threshold <- mean_genes-sd_genes -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- low_gene_clusters <- subset(cluster_gene_summary, GenesPerCell < threshold) -->
+
+<!-- d96_filtered <- subset(d96h_h1o, idents = low_gene_clusters$Cluster, invert = TRUE) -->
+<!-- ``` -->
+
 ```{r}
-# Extract the raw count matrix
-raw_counts <- GetAssayData(d96h_h1o, assay = "RNA", slot = "counts")
+d96_filtered <- subset(d96h_h1o, idents=3, invert=TRUE)
+```
 
 
-genes_per_cell <- colSums(raw_counts > 0)
+
+<!-- ```{r} -->
+<!-- #removing cluster n21 as the one containing cells in both groups -->
+<!-- d96_filtered2 <- subset(d96_filtered, idents = 5, invert = TRUE) -->
+<!-- d96_filtered2@active.ident %>% levels() -->
+<!-- #how do I extract the cluster identity without counting the plots? -->
+<!-- ``` -->
+<!-- ```{r} -->
+<!-- whichCells<- function(data, x){ -->
+<!--   temp<-WhichCells(data, idents = x) -->
+<!--   DimPlot(data, cells.highlight = temp) -->
+<!-- } -->
+<!-- #a vector with removed cluster names -->
+<!-- active_clusters<-d96_filtered@active.ident %>% levels() %>% as.numeric() -->
+
+<!-- # Apply the function for each cluster -->
+<!-- plots <- lapply(active_clusters, function(x) whichCells(d96_filtered, x)) -->
+
+<!-- # Display all plots -->
+<!-- print(plots) -->
+<!-- #this is the cluster to be removed -->
+<!-- print(plots[20]) -->
+
+<!-- #will give you the ids of all cells within a cluster which you can identify however you want -->
+<!-- ``` -->
+
+
+```{r}
+d96_filtered <- FindVariableFeatures(d96_filtered, selection.method = "vst")
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(d96_filtered), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(d96_filtered)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+plot2
 ```
 
 ```{r}
-# Create a dataframe with cluster identity and number of expressed genes per cell
-cluster_gene_data <- data.frame(Cluster = Idents(d96h_h1o), GenesPerCell = genes_per_cell)
+d96_filtered <- ScaleData(d96_filtered)
+```
 
-# Calculate the mean number of genes per cluster
-cluster_gene_summary <- aggregate(GenesPerCell ~ Cluster, data = cluster_gene_data, FUN = mean)
-sd_genes <- sd(genes_per_cell)
-mean_genes<- mean(genes_per_cell)
-threshold <- mean_genes-sd_genes
+```{r pca}
+d96_filtered <- RunPCA(d96_filtered, features = VariableFeatures(object = d96_filtered), npcs =30)
+print(d96_filtered[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(d96_filtered, dims = 1:2, reduction = "pca")
+DimPlot(d96_filtered, group.by = "scDblFinder.class", reduction = "pca") + NoLegend()
 ```
 
 ```{r}
-low_gene_clusters <- subset(cluster_gene_summary, GenesPerCell < threshold)
-
-d96_filtered <- subset(d96h_h1o, idents = low_gene_clusters$Cluster, invert = TRUE)
+ElbowPlot(d96_filtered)
+```
+```{r}
+d96_filtered <- FindNeighbors(d96_filtered, dims = 1:13)
+d96_filtered <- FindClusters(d96_filtered, resolution = 0.1)
 ```
 
 ```{r}
-d96_filtered <- RunUMAP(d96_filtered, dims = 1:12)
+d96_filtered <- RunUMAP(d96_filtered, dims = 1:13)
 DimPlot(d96_filtered, reduction = "umap")
-```
-```{r}
-whichCells<- function(data, x){
-  temp<-WhichCells(data, idents = x)
-  DimPlot(data, cells.highlight = temp)
-}
-#a vector with removed cluster names
-active_clusters<-d96_filtered@active.ident %>% levels() %>% as.numeric()
-
-# Apply the function for each cluster
-plots <- lapply(active_clusters, function(x) whichCells(d96_filtered, x))
-
-# Display all plots
-print(plots)
-#this is the cluster to be removed
-print(plots[20])
-
-#will give you the ids of all cells within a cluster which you can identify however you want
+DimPlot(d96_filtered, split.by="scDblFinder.class", reduction = "umap")
 ```
 
 ```{r}
-#removing cluster n21 as the one containing cells in both groups
-d96_filtered2 <- subset(d96_filtered, idents = 21, invert = TRUE)
-d96_filtered2@active.ident %>% levels()
-#how do I extract the cluster identity without counting the plots?
+#subsetting epithelial cells cluster
+d96_epithelial <- subset(d96_filtered, idents = 1)
+
+d96_epithelial <- FindVariableFeatures(d96_epithelial, selection.method = "vst")
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(d96_epithelial), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(d96_epithelial)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE, ynudge=0, xnudge=0)
+plot2
 ```
 
 ```{r}
-d96_filtered2 <- RunUMAP(d96_filtered2, dims = 1:12)
-DimPlot(d96_filtered2, reduction = "umap")
+d96_epithelial <- ScaleData(d96_epithelial)
+d96_epithelial  <- RunPCA(d96_epithelial , features = VariableFeatures(object = d96_epithelial ), npcs =30)
+print(d96_epithelial [["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(d96_epithelial , dims = 1:2, reduction = "pca")
+DimPlot(d96_epithelial , group.by = "scDblFinder.class", reduction = "pca") + NoLegend()
 ```
 
 ```{r}
-active_clusters2<-d96_filtered2@active.ident %>% levels() %>% as.numeric()
-plots <- lapply(active_clusters2, function(x) whichCells(d96_filtered2,x))
-print(plots)
+ElbowPlot(d96_epithelial)
 ```
+
+```{r}
+d96_epithelial <- FindNeighbors(d96_epithelial, dims = 1:16)
+d96_epithelial <- FindClusters(d96_epithelial, resolution = 0.3)
+```
+```{r}
+d96_epithelial <- RunUMAP(d96_epithelial, dims = 1:16)
+DimPlot(d96_epithelial, reduction = "umap")
+DimPlot(d96_epithelial, split.by="scDblFinder.class", reduction = "umap")
+```
+```{r}
+FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("nub", "rn")) #pouch
+```
+```{r}
+FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("eyg", "mirr")) #notum
+```
+
+
+```{r}
+, "Ubx", "eya", "zfh2", "Sox15", "eyg", "mirr"
+```
+
+```{r}
+FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("zfh2", "Sox15")) #hinge
+```
+
+
+```{r}
+FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("Ubx", "eya")) #PE
+```
+
+
+
+
+
+
+
+
+
 
 ```{r}
 #removing duplicates?
@@ -208,7 +348,7 @@ bcmvn <- find.pK(sweep.stats)
 
 ```{r}
 #As I removed 4 clusters, do I need to re-run PCA? Do I need to re-mormalise?
-FeaturePlot(d96_filtered2, features = c("SPARC", "Fas3", "wat", "tpr", "regucalcin", "He"))
+FeaturePlot(d96_filtered2, features = c("SPARC", "Fas3", "nw", "wat", "tpr", "regucalcin", "He"))
 ```
 ```{r}
 d96_filtered2 <- ScaleData(d96_filtered2)
@@ -218,6 +358,7 @@ print(d96_filtered2[["pca"]], dims = 1:5, nfeatures = 5)
 VizDimLoadings(d96_filtered2, dims = 1:2, reduction = "pca")
 DimPlot(d96_filtered2, reduction = "pca") + NoLegend()
 ```
+
 ```{r}
 ElbowPlot(d96_filtered2)
 ```
@@ -282,5 +423,17 @@ DimPlot(d96_epi_filtered, reduction = "umap")
 brk<-FetchData(d96_epi_filtered, vars = "brk", layer="data") %>% as.data.frame()
 #layer="counts" means raw data, layer="data" means normalised
 hist(brk[,"brk"], 50)
+plot(density(brk$brk))
+```
+
+```{r}
+Idents(object = d96_epi_filtered) <- "seurat_clusters"
+# View cell identities, get summary table
+Idents(d96_epi_filtered)
+table(Idents(d96_epi_filtered))
+DimPlot(d96_epi_filtered, reduction = "umap")
+```
+```{r}
+FeaturePlot(d96_epi_filtered, features = c("nub", "zfh2", "eyg", "mirr", "eya"))
 ```
 
