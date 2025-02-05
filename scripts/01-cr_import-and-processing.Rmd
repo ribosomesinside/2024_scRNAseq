@@ -19,6 +19,7 @@ library(readr)
 library(tidyverse)
 library(org.Dm.eg.db)
 library(loupeR)
+library(scDblFinder)
 ```
 
 ## Read data
@@ -26,18 +27,6 @@ library(loupeR)
 ```{r importing, include=FALSE}
 d96h_h1 <-Read10X("../data/GSE155543_RAW/Dros96HH1/")
 ```
-
-```{r}
-library(SingleCellExperiment)
-suppressPackageStartupMessages(library(scDblFinder))
-str(d96h_h1)
-sce <- SingleCellExperiment(assays = list(counts = d96h_h1))
-sce <- scDblFinder(sce)
-sce$scDblFinder.score
-sce$scDblFinder.class
-str(sce)
-```
-
 
 ## Make a seurat object
 
@@ -60,17 +49,31 @@ head(rownames(d96h_h1o))
 ```{r mito}
 # outlook on the mitochondrial genes in the genome annotation. There are 87 of the corresponding gene names
 mt_genes<-grepl("^m[A-Z]", gene_symbols)# %>% sum()
-table_mt<-gene_symbols[mt_genes] %>% as.tibble() %>% filter(value != "mTor")
-head(table_mt) 
-
-#write_csv(table_mt, "mito_genes.csv", col_names = FALSE)
 
 #Assigning the mitochondrial genes and calculating the percentage in the cells
 d96h_h1o[["percent.mt"]] <- PercentageFeatureSet(d96h_h1o, pattern = "^m[A-Z]")
 
-#Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
-#VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#mitochondrial genes does not seem to fall far away from the median
+VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
 ```
+
+
+##  We want to check whether there are any doublets in our data set
+Doublets are searched in unfiltered dataset, we use our original 10x matrix
+
+```{r}
+library(SingleCellExperiment)
+suppressPackageStartupMessages(library(scDblFinder))
+str(d96h_h1)
+sce <- SingleCellExperiment(assays = list(counts = d96h_h1))
+sce <- scDblFinder(sce)
+sce$scDblFinder.score
+sce$scDblFinder.class
+str(sce)
+```
+
+### Now we are adding doublet classification to the metadata of unfiltered seurat object
+
 ```{r}
 # Should return TRUE
 all.equal(colnames(sce), colnames(d96h_h1o))
@@ -79,35 +82,6 @@ d96h_h1o <- AddMetaData(d96h_h1o, metadata = doublet_info, col.name = "scDblFind
 VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), group.by = "scDblFinder.class")
 ```
 
-```{r QC-mito}
-#Here we see that the number of counts positively correlates with the number of mito genes. Thus, It is not clear to me where to set a threshold, definetely can be 0.9, but could it be lower?
-plot1 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "percent.mt")
-plot2 <- FeatureScatter(d96h_h1o, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
-plot1 
-plot2
-```
-
-```{r ribo}
-rb_genes<-grepl("^Rp[A-Z]", gene_symbols)# %>% sum()
-gene_symbols[rb_genes]
-
-d96h_h1o[["percent.rb"]] <- PercentageFeatureSet(d96h_h1o, pattern = "^Rp[A-Z]")
-
-#Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
-VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-```
-
-```{r}
-library(scDblFinder)
-
-```
-
-
-```{r}
-#Here is very concervative filtering
-d96h_h1o <- subset(d96h_h1o, subset = nFeature_RNA > 1000 & nCount_RNA<50000 & percent.mt < 0.9)
-nrow(d96h_h1o)
-```
 
 ## Normalising the data
 
@@ -115,8 +89,8 @@ nrow(d96h_h1o)
 #Performing conventional normalisation
 anyDuplicated(rownames(d96h_h1o))
 duplicates <- rownames(d96h_h1o)[duplicated(rownames(d96h_h1o))]
-print(duplicates)
-d96h_h1o <- d96h_h1o[!duplicated(rownames(d96h_h1o)), ]
+# print(duplicates)
+ d96h_h1o <- d96h_h1o[!duplicated(rownames(d96h_h1o)), ]
 
 d96h_h1o <- NormalizeData(d96h_h1o, normalization.method = "LogNormalize", scale.factor = 10000)
 
@@ -168,69 +142,23 @@ d96h_h1o <- FindClusters(d96h_h1o, resolution = 0.1)
 d96h_h1o <- RunUMAP(d96h_h1o, dims = 1:12)
 DimPlot(d96h_h1o, reduction = "umap")
 DimPlot(d96h_h1o, split.by="scDblFinder.class", reduction = "umap")
+d96h_h1o[[]] %>% dplyr::count(seurat_clusters, scDblFinder.class) %>% spread(key='scDblFinder.class', value=n)
 ```
+#from here it is clear that cluster 3 consists of doublets.
+Lets filter our dataset (through LoupeR) and see whether we remove those cells
 
 ```{r}
-FeaturePlot(d96h_h1o, split.by = "scDblFinder.class", features = c("SPARC", "Fas3", "eyg", "zfh2", "nub"))
+#Here is filtering based on values from Rloupe
+d96h_h1o <- subset(d96h_h1o, subset = nFeature_RNA > 2000 & nFeature_RNA < 3800 & nCount_RNA>11400 & nCount_RNA < 41000 & percent.mt < 0.9)
+VlnPlot(d96h_h1o, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
 ```
 
-<!-- Remove clusters with low quality cells -->
-<!-- ```{r} -->
-<!-- # Extract the raw count matrix -->
-<!-- raw_counts <- GetAssayData(d96h_h1o, assay = "RNA", slot = "counts") -->
-
-
-<!-- genes_per_cell <- colSums(raw_counts > 0) -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- # Create a dataframe with cluster identity and number of expressed genes per cell -->
-<!-- cluster_gene_data <- data.frame(Cluster = Idents(d96h_h1o), GenesPerCell = genes_per_cell) -->
-
-<!-- # Calculate the mean number of genes per cluster -->
-<!-- cluster_gene_summary <- aggregate(GenesPerCell ~ Cluster, data = cluster_gene_data, FUN = mean) -->
-<!-- sd_genes <- sd(genes_per_cell) -->
-<!-- mean_genes<- mean(genes_per_cell) -->
-<!-- threshold <- mean_genes-sd_genes -->
-<!-- ``` -->
-
-<!-- ```{r} -->
-<!-- low_gene_clusters <- subset(cluster_gene_summary, GenesPerCell < threshold) -->
-
-<!-- d96_filtered <- subset(d96h_h1o, idents = low_gene_clusters$Cluster, invert = TRUE) -->
-<!-- ``` -->
+# As we can see- we did not remove all the cells from cluster 3 yet, let's remove the rest
 
 ```{r}
 d96_filtered <- subset(d96h_h1o, idents=3, invert=TRUE)
 ```
-
-
-
-<!-- ```{r} -->
-<!-- #removing cluster n21 as the one containing cells in both groups -->
-<!-- d96_filtered2 <- subset(d96_filtered, idents = 5, invert = TRUE) -->
-<!-- d96_filtered2@active.ident %>% levels() -->
-<!-- #how do I extract the cluster identity without counting the plots? -->
-<!-- ``` -->
-<!-- ```{r} -->
-<!-- whichCells<- function(data, x){ -->
-<!--   temp<-WhichCells(data, idents = x) -->
-<!--   DimPlot(data, cells.highlight = temp) -->
-<!-- } -->
-<!-- #a vector with removed cluster names -->
-<!-- active_clusters<-d96_filtered@active.ident %>% levels() %>% as.numeric() -->
-
-<!-- # Apply the function for each cluster -->
-<!-- plots <- lapply(active_clusters, function(x) whichCells(d96_filtered, x)) -->
-
-<!-- # Display all plots -->
-<!-- print(plots) -->
-<!-- #this is the cluster to be removed -->
-<!-- print(plots[20]) -->
-
-<!-- #will give you the ids of all cells within a cluster which you can identify however you want -->
-<!-- ``` -->
-
+## Now as we made a few filtering steps, we need to re scale and re-run the analysis
 
 ```{r}
 d96_filtered <- FindVariableFeatures(d96_filtered, selection.method = "vst")
@@ -255,6 +183,7 @@ print(d96_filtered[["pca"]], dims = 1:5, nfeatures = 5)
 VizDimLoadings(d96_filtered, dims = 1:2, reduction = "pca")
 DimPlot(d96_filtered, group.by = "scDblFinder.class", reduction = "pca") + NoLegend()
 ```
+### we see much better separation and few predicted doublets. We will keep them, because it is just a prediction and we already done some harsh filtering
 
 ```{r}
 ElbowPlot(d96_filtered)
@@ -269,10 +198,23 @@ d96_filtered <- RunUMAP(d96_filtered, dims = 1:13)
 DimPlot(d96_filtered, reduction = "umap")
 DimPlot(d96_filtered, split.by="scDblFinder.class", reduction = "umap")
 ```
+#### We see no weird clusters, just 3 main ones-good
+
+```{r}
+ FeaturePlot(d96_filtered, split.by = "scDblFinder.class", features = c("SPARC", "Fas3", "eyg", "zfh2", "nub"), order=TRUE)
+```
+### looks fine. Lets save this filtered seurat object
+
+```{r}
+SaveSeuratRds(d96_filtered, "../data/d96H1_filtered.Rds")
+```
+
+
+### We need to work only with epithelial cells. We filter them
 
 ```{r}
 #subsetting epithelial cells cluster
-d96_epithelial <- subset(d96_filtered, idents = 1)
+d96_epithelial <- subset(d96_filtered, idents = 2)
 
 d96_epithelial <- FindVariableFeatures(d96_epithelial, selection.method = "vst")
 # Identify the 10 most highly variable genes
@@ -298,142 +240,66 @@ ElbowPlot(d96_epithelial)
 ```
 
 ```{r}
-d96_epithelial <- FindNeighbors(d96_epithelial, dims = 1:16)
-d96_epithelial <- FindClusters(d96_epithelial, resolution = 0.3)
+d96_epithelial <- FindNeighbors(d96_epithelial, dims = 1:16) %>%
+  FindClusters(resolution = 0.3)
 ```
 ```{r}
 d96_epithelial <- RunUMAP(d96_epithelial, dims = 1:16)
 DimPlot(d96_epithelial, reduction = "umap")
-DimPlot(d96_epithelial, split.by="scDblFinder.class", reduction = "umap")
 ```
 ```{r}
-FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("nub", "rn")) #pouch
+FeaturePlot(d96_epithelial, features = c("nub", "rn"), order=TRUE) #pouch
 ```
 ```{r}
-FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("eyg", "mirr")) #notum
+FeaturePlot(d96_epithelial, features = c("eyg", "pnr"), order=TRUE) #notum
 ```
+modulescores-> takes a few genes and plots avg value against random genes
+Seurat::FindSubCluster()
+number of dimentions and cluster resolution?
 
+glmgampoi for brk diff expression
 
 ```{r}
-, "Ubx", "eya", "zfh2", "Sox15", "eyg", "mirr"
-```
-
-```{r}
-FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("zfh2", "Sox15")) #hinge
-```
-
-
-```{r}
-FeaturePlot(d96_epithelial, split.by="scDblFinder.class", features = c("Ubx", "eya")) #PE
-```
-
-
-
-
-
-
-
-
-
-
-```{r}
-#removing duplicates?
-
-## pK Identification (no ground-truth) ----------------------------------------------------------------------------------
-sweep.res.list <- paramSweep(d96_filtered, PCs = 1:12, sct = FALSE)
-sweep.stats <- summarizeSweep(sweep.res.list, GT = FALSE)
-bcmvn <- find.pK(sweep.stats)
+FeaturePlot(d96_epithelial, features = c("zfh2", "Sox15"), order=TRUE) #hinge
 ```
 
 
 ```{r}
-#As I removed 4 clusters, do I need to re-run PCA? Do I need to re-mormalise?
-FeaturePlot(d96_filtered2, features = c("SPARC", "Fas3", "nw", "wat", "tpr", "regucalcin", "He"))
-```
-```{r}
-d96_filtered2 <- ScaleData(d96_filtered2)
-d96_filtered2 <- RunPCA(d96_filtered2, features = VariableFeatures(object = d96_filtered2), npcs =30)
-print(d96_filtered2[["pca"]], dims = 1:5, nfeatures = 5)
-
-VizDimLoadings(d96_filtered2, dims = 1:2, reduction = "pca")
-DimPlot(d96_filtered2, reduction = "pca") + NoLegend()
-```
-
-```{r}
-ElbowPlot(d96_filtered2)
-```
-```{r}
-d96_filtered2 <- FindNeighbors(d96_filtered2, dims = 1:12)
-d96_filtered2 <- FindClusters(d96_filtered2, resolution = 2)
-```
-```{r}
-d96_filtered2 <- RunUMAP(d96_filtered2, dims = 1:12)
-DimPlot(d96_filtered2, reduction = "umap")
-```
-```{r}
-active_clusters3<-d96_filtered2@active.ident %>% levels() %>% as.numeric()
-plots <- lapply(active_clusters3, function(x) whichCells(d96_filtered2,x))
-print(plots)
-```
-
-```{r}
-#re-assigning clusters to two big groups: epithelial and AMPs
-
-new_ids<-c("AMP","AMP","AMP","AMP","epithelial","AMP","epithelial","AMP","epithelial","AMP", "epithelial","AMP", "AMP","AMP", "AMP", "epithelial","epithelial", "AMP", "AMP", "AMP", "epithelial","AMP","AMP", "epithelial","AMP","AMP")
-length(new_ids)
-names(new_ids)<-levels(d96_filtered2)
-d96_filtered2 <- RenameIdents(d96_filtered2, new_ids)
-DimPlot(d96_filtered2, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
-```
-
-```{r}
-#do I need to recalculate all of those things?
-d96_epithelial<- subset(d96_filtered2, idents ="epithelial")
-d96_epithelial[["percent.mt"]] <- PercentageFeatureSet(d96_epithelial, pattern = "^m[A-Z]")
-
-#Here nothing seems to be done? number of features and mitochondrial genes does not seem to fall far away from the median
-VlnPlot(d96_epithelial, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-```
-
-```{r}
-epithelial_genes<-FetchData(object = d96_epithelial, vars = "nFeature_RNA", layer = "counts")
-epi_mean <- mean(epithelial_genes$nFeature_RNA)
-epi_sd <- sd(epithelial_genes$nFeature_RNA)
-d96_epi_filtered<-subset(d96_epithelial, subset=nFeature_RNA>(epi_mean-1.5*epi_sd)&nFeature_RNA<(epi_mean+1.5*epi_sd))
-VlnPlot(d96_epi_filtered, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+FeaturePlot(d96_epithelial, features = c("Ubx", "eya"), order=TRUE) #PE
 ```
 
 
 ```{r}
-d96_epi_filtered <- ScaleData(d96_epi_filtered)
-d96_epi_filtered <- RunPCA(d96_epi_filtered, features = VariableFeatures(object = d96_epi_filtered))
-print(d96_epi_filtered[["pca"]], dims = 1:5, nfeatures = 5)
+markers<- FindAllMarkers(d96_epithelial, only.pos = TRUE)
+markers0.05 <- markers %>% 
+  filter(p_val_adj<0.05)
 
-VizDimLoadings(d96_epi_filtered, dims = 1:2, reduction = "pca")
-DimPlot(d96_epi_filtered, reduction = "pca") + NoLegend()
-ElbowPlot(d96_epi_filtered)
-RunUMAP(d96_epi_filtered, dims = 1:12)
-DimPlot(d96_epi_filtered, reduction = "umap")
+top_markers <- markers0.05 %>% 
+  group_by(cluster) %>% 
+  slice_max(order_by = avg_log2FC, n=12)
+
+DotPlot(d96_epithelial, features = top_markers$gene) + RotatedAxis()
 ```
-
 
 
 ```{r}
-#extracting brk counts
-brk<-FetchData(d96_epi_filtered, vars = "brk", layer="data") %>% as.data.frame()
-#layer="counts" means raw data, layer="data" means normalised
-hist(brk[,"brk"], 50)
-plot(density(brk$brk))
+levels(d96_epithelial)
+new_ident <- c("hinge", "pouch", "pouch", "notum", "PE")
+names(new_ident) <- levels(d96_epithelial)
+d96_epithelial<- RenameIdents(d96_epithelial, new_ident)
+DimPlot(d96_epithelial, reduction = "umap")
 ```
 
+###for further analysis of Brk diff expr we need to remove PE
 ```{r}
-Idents(object = d96_epi_filtered) <- "seurat_clusters"
-# View cell identities, get summary table
-Idents(d96_epi_filtered)
-table(Idents(d96_epi_filtered))
-DimPlot(d96_epi_filtered, reduction = "umap")
+d96_dp <- subset(d96_epithelial, idents= "PE", invert=TRUE)
+DimPlot(d96_dp, reduction="umap")
 ```
+
+
 ```{r}
-FeaturePlot(d96_epi_filtered, features = c("nub", "zfh2", "eyg", "mirr", "eya"))
+VlnPlot(d96_epithelial, features = c("brk", "bi"))
 ```
+
+
 
