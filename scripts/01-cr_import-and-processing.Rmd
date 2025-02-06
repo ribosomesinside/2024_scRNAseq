@@ -351,3 +351,16 @@ DimPlot(d96_pouch_hinge, group.by = "Brk_expression")
 brk_markers <- FindMarkers(d96_pouch_hinge, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
 table(d96_pouch_hinge$Brk_expression)
 ```
+### If we compare cells globally in the whole disc proper?
+
+```{r}
+d96_dp$Brk_expression <- ifelse(brk$brk > 0.3, "High", "Low")
+DimPlot(d96_dp, group.by = "Brk_expression")
+```
+```{r}
+global_brk_markers <- FindMarkers(d96_dp, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
+global_brk_markers_filtered<- global_brk_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
+```
+
