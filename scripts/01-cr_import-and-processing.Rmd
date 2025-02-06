@@ -301,5 +301,53 @@ DimPlot(d96_dp, reduction="umap")
 VlnPlot(d96_epithelial, features = c("brk", "bi"))
 ```
 
+```{r}
+#extracting brk counts
+brk<-FetchData(d96_dp, vars = "brk", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+hist(brk[,"brk"], 50)
+plot(density(brk$brk))
+```
 
+```{r}
+dens_brk<-density(brk$brk)
+y_c<-dens_brk$y
+peak.indices <- which(diff(sign(diff(y_c))) == -2) + 1
+# Extract the peak heights and corresponding x positions
+peak.heights <- y_c[peak.indices]
+peak.positions <- dens_brk$x[peak.indices]
 
+ordered.peaks <- order(peak.heights, decreasing = TRUE)
+secondary.peak <- list(x = peak.positions[ordered.peaks[2]], 
+                       y = peak.heights[ordered.peaks[2]])
+```
+
+```{r}
+plot(dens_brk, main = "Density Estimate with Peaks")
+points(secondary.peak$x, secondary.peak$y, col = "blue", pch = 19, cex = 1.5)
+cat("Secondary Peak: x =", secondary.peak$x, "y =", secondary.peak$y, "\n")
+```
+### To find a threshold of brk expression we need to fit in mixture gaussian model, but so far lets just arbitrary set a threshold to 0.3 
+```{r}
+d96_pouch <- subset(d96_epithelial, idents= "pouch")
+# Create a new metadata column called 'GeneX_Group'
+d96_pouch$Brk_expression <- ifelse(brk$brk > 0.3, "High", "Low")
+DimPlot(d96_pouch, group.by = "Brk_expression")
+```
+```{r}
+brk_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
+table(d96_pouch$Brk_expression)
+```
+
+```{r}
+d96_pouch_hinge <- subset(d96_epithelial, idents= c("pouch", "hinge"))
+#Create a new metadata column called 'GeneX_Group'
+d96_pouch_hinge$Brk_expression <- ifelse(brk$brk > 0.3, "High", "Low")
+DimPlot(d96_pouch_hinge, group.by = "Brk_expression")
+
+```
+
+```{r}
+brk_markers <- FindMarkers(d96_pouch_hinge, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
+table(d96_pouch_hinge$Brk_expression)
+```
