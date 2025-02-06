@@ -278,7 +278,7 @@ top_markers <- markers0.05 %>%
   group_by(cluster) %>% 
   slice_max(order_by = avg_log2FC, n=12)
 
-DotPlot(d96_epithelial, features = top_markers$gene) + RotatedAxis()
+DotPlot(d96_epithelial, features = top_markers$gene) + RotatedAxis() #you can do that manually just add features you want from the paper
 ```
 
 
@@ -340,17 +340,61 @@ table(d96_pouch$Brk_expression)
 ```
 
 ```{r}
-d96_pouch_hinge <- subset(d96_epithelial, idents= c("pouch", "hinge"))
-#Create a new metadata column called 'GeneX_Group'
-d96_pouch_hinge$Brk_expression <- ifelse(brk$brk > 0.3, "High", "Low")
-DimPlot(d96_pouch_hinge, group.by = "Brk_expression")
+# I think I need to re-run variable features and scaling of only pouch cells, because now lfc are in comparison with other parts of the disc
+
+d96_pouch <- FindVariableFeatures(d96_pouch, selection.method = "vst")
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(d96_pouch), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(d96_pouch)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE, ynudge=0, xnudge=0)
+plot2
 
 ```
 
 ```{r}
-brk_markers <- FindMarkers(d96_pouch_hinge, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
-table(d96_pouch_hinge$Brk_expression)
+d96_pouch <- ScaleData(d96_pouch) %>% 
+  RunPCA(features = VariableFeatures(object = d96_pouch), npcs =30)
+
+VizDimLoadings(d96_pouch , dims = 1:2, reduction = "pca")
+DimPlot(d96_pouch, group.by ="Brk_expression", reduction = "pca") + NoLegend()
+#its rather a spectrum
 ```
+
+```{r}
+ElbowPlot(d96_pouch)
+```
+
+```{r}
+d96_pouch <- FindNeighbors(d96_pouch, dims = 1:16) %>%
+  FindClusters(resolution = 0.3)
+```
+```{r}
+d96_pouch <- RunUMAP(d96_pouch, dims = 1:16)
+DimPlot(d96_pouch, reduction = "umap")
+```
+
+```{r}
+markers_pouch<- FindAllMarkers(d96_pouch, only.pos = TRUE)
+markers_pouch0.05 <- markers_pouch %>% 
+  filter(p_val_adj<0.05)
+
+top_markers_pouch <- markers_pouch0.05 %>% 
+  group_by(cluster) %>% 
+  slice_max(order_by = avg_log2FC, n=10)
+
+DotPlot(d96_pouch, features = top_markers_pouch$gene) + RotatedAxis()
+```
+
+```{r}
+pouch_brk_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
+pouch_brk_markers_filtered<- pouch_brk_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
+```
+
+
 ### If we compare cells globally in the whole disc proper?
 
 ```{r}
@@ -362,5 +406,13 @@ global_brk_markers <- FindMarkers(d96_dp, ident.1 = "High", ident.2 = "Low", gro
 global_brk_markers_filtered<- global_brk_markers %>% 
   filter(p_val_adj<0.05) %>% 
   arrange(avg_log2FC)
+```
+
+```{r}
+global_brk_markers_filtered %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  na.omit() %>% 
+  select(gene, log2FoldChange) %>% 
+  deframe()->
 ```
 
