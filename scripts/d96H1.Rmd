@@ -432,3 +432,46 @@ gse <- gseGO (global_brk_markers_rank,
 summary(gse) %>% as.tibble() -> gse_summary
 dotplot(gse, showCategory=15)
 ```
+```{r}
+split_genes <- strsplit(gse_summary$core_enrichment[5], "/")
+ribos_genes <- unlist(split_genes)
+matching_rows <- global_brk_markers[rownames(global_brk_markers) %in% ribos_genes,]
+#only RpL34a is significantly downregulated, but still very little
+```
+
+```{r}
+#trying to check for pouch and hinge
+
+pouch_hinge <- subset(d96_epithelial, idents=c("pouch", "hinge"))
+pouch_hinge<-pouch_hinge %>%  
+  FindVariableFeatures(selection.method = "vst") %>% 
+  ScaleData() %>% 
+  RunPCA(features = VariableFeatures(object = pouch_hinge), npcs =30)
+VizDimLoadings(pouch_hinge , dims = 1:2, reduction = "pca")
+pouch_hinge$Brk_expression <- ifelse(brk$brk > 0.5, "High", "Low")
+DimPlot(pouch_hinge, group.by ="Brk_expression", reduction = "pca") 
+```
+```{r}
+ElbowPlot(pouch_hinge)
+```
+
+```{r}
+pouch_hinge <- FindNeighbors(pouch_hinge, dims = 1:16) %>%
+  FindClusters(resolution = 0.3)
+```
+
+```{r}
+pouch_hinge <-RunUMAP(pouch_hinge, dims = 1:16)
+DimPlot(pouch_hinge, reduction="umap", group.by = "Brk_expression")
+```
+
+```{r}
+FeaturePlot(pouch_hinge, c("brk", "RpL34a"), order=TRUE)
+```
+```{r}
+brk_markers <- FindMarkers(pouch_hinge, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
+brk_markers_filtered<- brk_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
+```
+

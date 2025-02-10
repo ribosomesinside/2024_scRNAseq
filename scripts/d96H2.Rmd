@@ -147,8 +147,8 @@ d96h_h2o[[]] %>% dplyr::count(seurat_clusters, scDblFinder.class) %>% spread(key
 ```
 #from here it is not clear that there are doeblets. I need to filter the dataset in LoupeR and see what happens
 ```{r}
-library(loupeR)
-create_loupe_from_seurat(d96h_h2o, output_name = "../d96H2")
+#library(loupeR)
+#create_loupe_from_seurat(d96h_h2o, output_name = "../d96H2")
 ```
 
 
@@ -174,6 +174,19 @@ plot2
 
 ```{r}
 d96_filtered <- ScaleData(d96_filtered)
+# Get features in scale.data
+scaled_features <- rownames(GetAssayData(d96_filtered, slot = "scale.data"))
+
+# Get features in new data layer
+new_features <- rownames(GetAssayData(d96_filtered, slot = "data"))  # or "counts"
+
+# Find missing features
+missing_features <- setdiff(new_features, scaled_features)
+extra_features <- setdiff(scaled_features, new_features)
+
+print(missing_features)
+print(extra_features)
+
 ```
 
 ```{r pca}
@@ -198,16 +211,35 @@ d96_filtered <- RunUMAP(d96_filtered, dims = 1:13)
 DimPlot(d96_filtered, reduction = "umap")
 DimPlot(d96_filtered, split.by="scDblFinder.class", reduction = "umap")
 ```
-#### We see no weird clusters, just 3 main ones-good
+#### As I saw doublets in-between two clusters I want to remove them and see how it affects PCA
 
 ```{r}
- FeaturePlot(d96_filtered, split.by = "scDblFinder.class", features = c("SPARC", "Fas3", "eyg", "zfh2", "nub"), order=TRUE)
-d96_filtered[[]] %>% dplyr::count(seurat_clusters, scDblFinder.class) %>% spread(key='scDblFinder.class', value=n)
+d96_filtered_doublets <- subset(d96_filtered, subset=scDblFinder.class=="singlet")
+d96_filtered_doublets <- FindVariableFeatures(d96_filtered_doublets, selection.method = "vst") %>% ScaleData()
+d96_filtered_doublets <- RunPCA(d96_filtered_doublets, features = VariableFeatures(object = d96_filtered_doublets), npcs =30)
+print(d96_filtered_doublets[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(d96_filtered_doublets, dims = 1:2, reduction = "pca")
+DimPlot(d96_filtered_doublets, group.by = "scDblFinder.class", reduction = "pca") + NoLegend()
 ```
-### looks fine. I will not remove more potential doublets
+
+```{r}
+d96_filtered_doublets <- FindNeighbors(d96_filtered_doublets, dims = 1:13)
+d96_filtered_doublets <- FindClusters(d96_filtered_doublets, resolution = 0.1)
+```
+```{r}
+d96_filtered_doublets <- RunUMAP(d96_filtered_doublets, dims = 1:13)
+DimPlot(d96_filtered_doublets, reduction = "umap")
+```
+
+```{r}
+ FeaturePlot(d96_filtered_doublets, features = c("SPARC", "Fas3", "eyg", "zfh2", "nub"), order=TRUE)
+#d96_filtered[[]] %>% dplyr::count(seurat_clusters, scDblFinder.class) %>% spread(key='scDblFinder.class', value=n)
+```
+### Saving filtered seurat
 ------------------------------------------------------------here I stopped
 ```{r}
-SaveSeuratRds(d96_filtered, "../data/d96H1_filtered.Rds")
+SaveSeuratRds(d96_filtered_doublets, "../data/d96H2_filtered.Rds")
 ```
 
 
@@ -215,7 +247,7 @@ SaveSeuratRds(d96_filtered, "../data/d96H1_filtered.Rds")
 
 ```{r}
 #subsetting epithelial cells cluster
-d96_epithelial <- subset(d96_filtered, idents = 2)
+d96_epithelial <- subset(d96_filtered_doublets, idents = 2)
 
 d96_epithelial <- FindVariableFeatures(d96_epithelial, selection.method = "vst")
 # Identify the 10 most highly variable genes
@@ -285,7 +317,7 @@ DotPlot(d96_epithelial, features = top_markers$gene) + RotatedAxis() #you can do
 
 ```{r}
 levels(d96_epithelial)
-new_ident <- c("hinge", "pouch", "pouch", "notum", "PE")
+new_ident <- c("pouch", "hinge", "notum", "PE")
 names(new_ident) <- levels(d96_epithelial)
 d96_epithelial<- RenameIdents(d96_epithelial, new_ident)
 DimPlot(d96_epithelial, reduction = "umap")
@@ -332,7 +364,7 @@ cat("Secondary Peak: x =", secondary.peak$x, "y =", secondary.peak$y, "\n")
 ```{r}
 d96_pouch <- subset(d96_epithelial, idents= "pouch")
 # Create a new metadata column called 'GeneX_Group'
-d96_pouch$Brk_expression <- ifelse(brk$brk > 0.3, "High", "Low")
+d96_pouch$Brk_expression <- ifelse(brk$brk > 0.2, "High", "Low")
 DimPlot(d96_pouch, group.by = "Brk_expression")
 ```
 ```{r}
@@ -399,7 +431,7 @@ pouch_brk_markers_filtered<- pouch_brk_markers %>%
 ### If we compare cells globally in the whole disc proper?
 
 ```{r}
-d96_dp$Brk_expression <- ifelse(brk$brk > 0.3, "High", "Low")
+d96_dp$Brk_expression <- ifelse(brk$brk > 0.2, "High", "Low")
 DimPlot(d96_dp, group.by = "Brk_expression")
 ```
 ```{r}
@@ -434,10 +466,10 @@ summary(gse) %>% as.tibble() -> gse_summary
 dotplot(gse, showCategory=15)
 ```
 ```{r}
-split_genes <- strsplit(gse_summary$core_enrichment[5], "/")
+split_genes <- strsplit(gse_summary$core_enrichment[1], "/")
 ribos_genes <- unlist(split_genes)
 matching_rows <- global_brk_markers[rownames(global_brk_markers) %in% ribos_genes,]
-#only RpL34a is significantly downregulated, but still very little
+#only fibrillarin has smaller p_adj 0.4
 ```
 
 ```{r}
@@ -449,7 +481,7 @@ pouch_hinge<-pouch_hinge %>%
   ScaleData() %>% 
   RunPCA(features = VariableFeatures(object = pouch_hinge), npcs =30)
 VizDimLoadings(pouch_hinge , dims = 1:2, reduction = "pca")
-pouch_hinge$Brk_expression <- ifelse(brk$brk > 0.5, "High", "Low")
+pouch_hinge$Brk_expression <- ifelse(brk$brk > 0.2, "High", "Low")
 DimPlot(pouch_hinge, group.by ="Brk_expression", reduction = "pca") 
 ```
 ```{r}
