@@ -440,6 +440,18 @@ matching_rows <- global_brk_markers[rownames(global_brk_markers) %in% ribos_gene
 ```
 
 ```{r}
+export_markers<-global_brk_markers_filtered %>% mutate(., gene = mapIds(
+  org.Dm.eg.db,
+  keys = rownames(.),
+  column ="FLYBASE",
+  keytype = "SYMBOL",
+  multiVals = "first"))
+  
+write.table(export_markers, file="../global_brk_markers.csv", sep="," ) 
+```
+
+
+```{r}
 #trying to check for pouch and hinge
 
 pouch_hinge <- subset(d96_epithelial, idents=c("pouch", "hinge"))
@@ -473,5 +485,176 @@ brk_markers <- FindMarkers(pouch_hinge, ident.1 = "High", ident.2 = "Low", group
 brk_markers_filtered<- brk_markers %>% 
   filter(p_val_adj<0.05) %>% 
   arrange(avg_log2FC)
+```
+
+```{r}
+#extracting bi counts
+bi<-FetchData(d96_dp, vars = "bi", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+hist(bi[,"bi"], 50)
+plot(density(bi$bi))
+```
+
+
+```{r}
+dens_bi<-density(bi$bi)
+y_c<-dens_bi$y
+peak.indices <- which(diff(sign(diff(y_c))) == -2) + 1
+# Extract the peak heights and corresponding x positions
+peak.heights <- y_c[peak.indices]
+peak.positions <- dens_bi$x[peak.indices]
+
+ordered.peaks <- order(peak.heights, decreasing = TRUE)
+secondary.peak <- list(x = peak.positions[ordered.peaks[2]], 
+                       y = peak.heights[ordered.peaks[2]])
+```
+
+```{r}
+plot(dens_bi, main = "Density Estimate with Peaks")
+points(secondary.peak$x, secondary.peak$y, col = "blue", pch = 19, cex = 1.5)
+cat("Secondary Peak: x =", secondary.peak$x, "y =", secondary.peak$y, "\n")
+```
+
+```{r}
+d96_dp$bi_expression <- ifelse(bi$bi > 1, "High", "Low")
+d96_pouch$bi_expression <- ifelse(bi$bi > 1, "High", "Low")
+pouch_hinge$bi_expression <- ifelse(bi$bi > 1, "High", "Low")
+
+DimPlot(d96_dp, group.by = "bi_expression")
+DimPlot(d96_pouch, group.by = "bi_expression")
+DimPlot(pouch_hinge, group.by = "bi_expression")
+
+```
+
+```{r}
+FeaturePlot(d96_pouch, c("bi", "brk"), order=TRUE)
+```
+
+```{r}
+FeaturePlot(d96_pouch, "bi", order=TRUE, split.by = "bi_expression")
+```
+```{r}
+FeaturePlot(d96_pouch, c("brk"), order=TRUE, split.by = "Brk_expression")
+Dotplot(d96_pouch, )
+```
+
+```{r}
+bi_pouch <- FetchData(d96_pouch, vars = "bi", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+hist(bi[,"bi"], 50)
+plot(density(bi_pouch$bi))
+```
+
+```{r}
+d96_pouch$bi_expression <- ifelse(bi_pouch$bi > 1, "High", "Low")
+DimPlot(d96_pouch, group.by = "bi_expression")
+
+```
+
+```{r}
+brk_pouch <- FetchData(d96_pouch, vars = "brk", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+
+plot(density(brk_pouch$brk))
+```
+
+```{r}
+d96_pouch$Brk_expression <- ifelse(brk_pouch$brk > 0.3, "High", "Low")
+DimPlot(d96_pouch, group.by = "Brk_expression")
+```
+
+```{r}
+pouch_bi_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "bi_expression")
+pouch_bi_markers_filtered<- pouch_bi_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
+```
+
+```{r}
+pouch_bi_markers %>% 
+  rownames_to_column("gene") %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  na.omit() %>% 
+  dplyr::select(gene, avg_log2FC) %>% 
+  deframe()-> pouch_bi_markers_rank
+```
+
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+
+gse <- gseGO(pouch_bi_markers_rank,
+             ont="BP",
+             OrgDb=org.Dm.eg.db,
+             keyType="SYMBOL",
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             minGSSize=3,
+             pAdjustMethod = "BH")
+summary(gse) %>% as.tibble() -> gse_summary
+dotplot(gse, showCategory=15)
+```
+
+```{r}
+pouch_brk_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
+pouch_brk_markers_filtered<- pouch_brk_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
+```
+
+```{r}
+pouch_brk_markers %>% 
+  rownames_to_column("gene") %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  na.omit() %>% 
+  dplyr::select(gene, avg_log2FC) %>% 
+  deframe()-> pouch_brk_markers_rank
+```
+
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+
+gse <- gseGO(pouch_brk_markers_rank,
+             ont="BP",
+             OrgDb=org.Dm.eg.db,
+             keyType="SYMBOL",
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             minGSSize=3,
+             pAdjustMethod = "BH",
+             nPermSimple = 10000)
+summary(gse) %>% as.tibble() -> gse_summary
+dotplot(gse, showCategory=15)
+```
+
+
+```{r}
+brk_pouch_signature_pos <- pouch_brk_markers_filtered %>% 
+  filter(avg_log2FC>0) %>% 
+  rownames_to_column("gene") %>% 
+  dplyr::select(gene) %>% 
+  deframe()
+
+ggo <- groupGO(brk_pouch_signature_pos,
+               OrgDb=org.Dm.eg.db,
+               keyType="SYMBOL",
+               ont="BP",
+               level=2)
+
+ggo %>% summary() -> ggo_summary
+ggo_10 <- ggo_summary %>% 
+  arrange(desc(Count)) %>% select(Description, Count, geneID) %>%  head(10)
+```
+
+```{r}
+export_markers<-pouch_brk_markers_filtered %>% mutate(., gene = mapIds(
+  org.Dm.eg.db,
+  keys = rownames(.),
+  column ="FLYBASE",
+  keytype = "SYMBOL",
+  multiVals = "first"))
+  
+write.table(export_markers, file="../pouch_brk_markers.csv", sep="," ) 
 ```
 
