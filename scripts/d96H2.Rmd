@@ -331,67 +331,16 @@ DimPlot(d96_dp, reduction="umap")
 
 
 ```{r}
-VlnPlot(d96_epithelial, features = c("brk", "bi"))
+VlnPlot(d96_dp, features = c("brk", "bi"))
 ```
 
 ```{r}
-#extracting brk counts
-brk<-FetchData(d96_dp, vars = "brk", layer="data") %>% as.data.frame()
-#layer="counts" means raw data, layer="data" means normalised
-hist(brk[,"brk"], 50)
-plot(density(brk$brk))
-```
-
-```{r}
-dens_brk<-density(brk$brk)
-y_c<-dens_brk$y
-peak.indices <- which(diff(sign(diff(y_c))) == -2) + 1
-# Extract the peak heights and corresponding x positions
-peak.heights <- y_c[peak.indices]
-peak.positions <- dens_brk$x[peak.indices]
-
-ordered.peaks <- order(peak.heights, decreasing = TRUE)
-secondary.peak <- list(x = peak.positions[ordered.peaks[2]], 
-                       y = peak.heights[ordered.peaks[2]])
-```
-
-```{r}
-plot(dens_brk, main = "Density Estimate with Peaks")
-points(secondary.peak$x, secondary.peak$y, col = "blue", pch = 19, cex = 1.5)
-cat("Secondary Peak: x =", secondary.peak$x, "y =", secondary.peak$y, "\n")
-```
-### To find a threshold of brk expression we need to fit in mixture gaussian model, but so far lets just arbitrary set a threshold to 0.3 
-```{r}
-d96_pouch <- subset(d96_epithelial, idents= "pouch")
-# Create a new metadata column called 'GeneX_Group'
-d96_pouch$Brk_expression <- ifelse(brk$brk > 0.2, "High", "Low")
-DimPlot(d96_pouch, group.by = "Brk_expression")
-```
-```{r}
-brk_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
-table(d96_pouch$Brk_expression)
-```
-
-```{r}
-# I think I need to re-run variable features and scaling of only pouch cells, because now lfc are in comparison with other parts of the disc
-
-d96_pouch <- FindVariableFeatures(d96_pouch, selection.method = "vst")
-# Identify the 10 most highly variable genes
-top10 <- head(VariableFeatures(d96_pouch), 10)
-
-# plot variable features with and without labels
-plot1 <- VariableFeaturePlot(d96_pouch)
-plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE, ynudge=0, xnudge=0)
-plot2
-
-```
-
-```{r}
+d96_pouch <-subset(d96_epithelial, idents="pouch")
 d96_pouch <- ScaleData(d96_pouch) %>% 
   RunPCA(features = VariableFeatures(object = d96_pouch), npcs =30)
 
 VizDimLoadings(d96_pouch , dims = 1:2, reduction = "pca")
-DimPlot(d96_pouch, group.by ="Brk_expression", reduction = "pca") + NoLegend()
+DimPlot(d96_pouch, reduction = "pca") + NoLegend()
 #its rather a spectrum
 ```
 
@@ -420,6 +369,48 @@ top_markers_pouch <- markers_pouch0.05 %>%
 DotPlot(d96_pouch, features = top_markers_pouch$gene) + RotatedAxis()
 ```
 
+
+```{r}
+FeaturePlot(d96_pouch, c("bi", "brk"), order=TRUE)
+```
+
+```{r}
+brk_pouch <- FetchData(d96_pouch, vars = "brk", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+
+#plot(density(brk_pouch$brk))
+```
+
+
+```{r}
+dens_brk<-density(brk_pouch$brk)
+y_c<-dens_brk$y
+peak.indices <- which(diff(sign(diff(y_c))) == -2) + 1
+# Extract the peak heights and corresponding x positions
+peak.heights <- y_c[peak.indices]
+peak.positions <- dens_brk$x[peak.indices]
+
+ordered.peaks <- order(peak.heights, decreasing = TRUE)
+secondary.peak <- list(x = peak.positions[ordered.peaks[2]], 
+                       y = peak.heights[ordered.peaks[2]])
+```
+
+```{r}
+plot(dens_brk, main = "Density Estimate with Peaks")
+points(secondary.peak$x, secondary.peak$y, col = "blue", pch = 19, cex = 1.5)
+cat("Secondary Peak: x =", secondary.peak$x, "y =", secondary.peak$y, "\n")
+```
+
+```{r}
+d96_pouch$Brk_expression <- ifelse(brk_pouch$brk > 0.2, "High", "Low")
+DimPlot(d96_pouch, group.by = "Brk_expression")
+```
+
+```{r}
+FeaturePlot(d96_pouch, c("brk"), order=TRUE, split.by = "Brk_expression")
+#Dotplot(d96_pouch, )
+```
+
 ```{r}
 pouch_brk_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
 pouch_brk_markers_filtered<- pouch_brk_markers %>% 
@@ -427,34 +418,68 @@ pouch_brk_markers_filtered<- pouch_brk_markers %>%
   arrange(avg_log2FC)
 ```
 
-
-### If we compare cells globally in the whole disc proper?
-
 ```{r}
-d96_dp$Brk_expression <- ifelse(brk$brk > 0.2, "High", "Low")
-DimPlot(d96_dp, group.by = "Brk_expression")
-```
-```{r}
-global_brk_markers <- FindMarkers(d96_dp, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
-global_brk_markers_filtered<- global_brk_markers %>% 
-  filter(p_val_adj<0.05) %>% 
-  arrange(avg_log2FC)
-```
-
-```{r}
-global_brk_markers %>% 
+pouch_brk_markers %>% 
   rownames_to_column("gene") %>% 
   arrange(desc(avg_log2FC)) %>% 
   na.omit() %>% 
   dplyr::select(gene, avg_log2FC) %>% 
-  deframe()-> global_brk_markers_rank
+  deframe()-> pouch_brk_markers_rank
 ```
 
 ```{r}
 library(clusterProfiler)
 library(enrichplot)
 
-gse <- gseGO (global_brk_markers_rank,
+gse <- gseGO(pouch_brk_markers_rank,
+             ont="BP",
+             OrgDb=org.Dm.eg.db,
+             keyType="SYMBOL",
+             pvalueCutoff = 0.05, 
+             verbose = TRUE, 
+             minGSSize=3,
+             pAdjustMethod = "BH",
+             nPermSimple = 10000)
+summary(gse) #%>% as.tibble() -> gse_summary
+
+```
+
+### Bi analysis
+```{r}
+bi_pouch <- FetchData(d96_pouch, vars = "bi", layer="data") %>% as.data.frame()
+#layer="counts" means raw data, layer="data" means normalised
+plot(density(bi_pouch$bi))
+```
+
+```{r}
+d96_pouch$bi_expression <- ifelse(bi_pouch$bi > 1, "High", "Low")
+DimPlot(d96_pouch, group.by = "bi_expression")
+
+```
+
+```{r}
+FeaturePlot(d96_pouch, "bi", order=TRUE, split.by = "bi_expression")
+```
+
+
+```{r}
+pouch_bi_markers <- FindMarkers(d96_pouch, ident.1 = "High", ident.2 = "Low", group.by = "bi_expression")
+pouch_bi_markers_filtered<- pouch_bi_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
+```
+
+```{r}
+pouch_bi_markers %>% 
+  rownames_to_column("gene") %>% 
+  arrange(desc(avg_log2FC)) %>% 
+  na.omit() %>% 
+  dplyr::select(gene, avg_log2FC) %>% 
+  deframe()-> pouch_bi_markers_rank
+```
+
+```{r}
+gse <- gseGO(pouch_bi_markers_rank,
              ont="BP",
              OrgDb=org.Dm.eg.db,
              keyType="SYMBOL",
@@ -462,49 +487,6 @@ gse <- gseGO (global_brk_markers_rank,
              verbose = TRUE, 
              minGSSize=3,
              pAdjustMethod = "BH")
-summary(gse) %>% as.tibble() -> gse_summary
+as.data.frame(gse) %>% as.tibble() -> gse_summary
 dotplot(gse, showCategory=15)
 ```
-```{r}
-split_genes <- strsplit(gse_summary$core_enrichment[1], "/")
-ribos_genes <- unlist(split_genes)
-matching_rows <- global_brk_markers[rownames(global_brk_markers) %in% ribos_genes,]
-#only fibrillarin has smaller p_adj 0.4
-```
-
-```{r}
-#trying to check for pouch and hinge
-
-pouch_hinge <- subset(d96_epithelial, idents=c("pouch", "hinge"))
-pouch_hinge<-pouch_hinge %>%  
-  FindVariableFeatures(selection.method = "vst") %>% 
-  ScaleData() %>% 
-  RunPCA(features = VariableFeatures(object = pouch_hinge), npcs =30)
-VizDimLoadings(pouch_hinge , dims = 1:2, reduction = "pca")
-pouch_hinge$Brk_expression <- ifelse(brk$brk > 0.2, "High", "Low")
-DimPlot(pouch_hinge, group.by ="Brk_expression", reduction = "pca") 
-```
-```{r}
-ElbowPlot(pouch_hinge)
-```
-
-```{r}
-pouch_hinge <- FindNeighbors(pouch_hinge, dims = 1:16) %>%
-  FindClusters(resolution = 0.3)
-```
-
-```{r}
-pouch_hinge <-RunUMAP(pouch_hinge, dims = 1:16)
-DimPlot(pouch_hinge, reduction="umap", group.by = "Brk_expression")
-```
-
-```{r}
-FeaturePlot(pouch_hinge, c("brk", "RpL34a"), order=TRUE)
-```
-```{r}
-brk_markers <- FindMarkers(pouch_hinge, ident.1 = "High", ident.2 = "Low", group.by = "Brk_expression")
-brk_markers_filtered<- brk_markers %>% 
-  filter(p_val_adj<0.05) %>% 
-  arrange(avg_log2FC)
-```
-
