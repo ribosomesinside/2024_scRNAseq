@@ -12,6 +12,7 @@ d96_pouch_h2 <- readRDS(file = "../data/d96_pouch_h2.Rds")
 
 ```{r}
 merged_seurat <- merge(d96_pouch_h1, y = d96_pouch_h2, add.cell.ids = c("Rep1", "Rep2"), project = "Merged")
+merged_seurat[["RNA"]] <- JoinLayers(merged_seurat)
 DimPlot(d96_pouch_h1, reduction = "umap")
 DimPlot(d96_pouch_h2, reduction = "umap")
 
@@ -35,5 +36,50 @@ integrated_seurat <- ScaleData(integrated_seurat) %>%
 ```
 ```{r}
 DimPlot(integrated_seurat, reduction="umap", group.by = "orig.ident")
+```
+
+```{r}
+FeaturePlot(integrated_seurat, "brk", order=TRUE, split.by = "Brk_expression")
+```
+
+```{r}
+ncol(integrated_seurat)
+ncol(d96_pouch_h1)
+ncol(d96_pouch_h2)
+```
+```{r}
+brk_integrated<-FetchData(integrated_seurat, vars = "brk", layer="data") %>% as.data.frame()
+hist(brk_integrated$brk)
+```
+```{r}
+brk_pos<-brk_integrated %>% filter(brk>0) #%>% nrow()
+plot(density(brk_pos$brk))
+hist(brk_pos$brk)
+brk_pos %>% summary()
+```
+
+```{r}
+integrated_seurat@meta.data$Brk_expression %>% table()
+```
+```{r}
+VlnPlot(integrated_seurat, feature=c("brk", "bi"), group.by = "Brk_expression")
+```
+
+```{r}
+integrated_seurat$brk_expr_new <- ifelse(brk_integrated$brk>0.15, "High", "Low") 
+integrated_seurat@meta.data$brk_expr_new %>% table()
+```
+```{r}
+VlnPlot(integrated_seurat, feature=c("brk", "bi"), group.by = "brk_expr_new")
+```
+
+```{r}
+FeaturePlot(integrated_seurat, "brk", order=TRUE, split.by = "brk_expr_new")
+```
+```{r}
+brk_markers <- FindMarkers(integrated_seurat, ident.1 = "High", ident.2 = "Low", group.by = "brk_expr_new")
+brk_markers_filtered<- brk_markers %>% 
+  filter(p_val_adj<0.05) %>% 
+  arrange(avg_log2FC)
 ```
 
