@@ -435,7 +435,7 @@ summary(gse) #%>% as.tibble() -> gse_summary
 brk_dp <- FetchData(d96_dp, vars = "brk", layer="data") %>% as.data.frame()
 d96_dp$Brk_expression <- ifelse(brk_dp$brk > 0.3, "High", "Low")
 DimPlot(d96_dp, group.by = "Brk_expression")
-hist(brk[,"brk"], 50)
+hist(brk_dp[,"brk"], 50)
 plot(density(brk$brk))
 ```
 
@@ -564,13 +564,17 @@ ggo_10 <- ggo_summary %>%
 ```
 
 ```{r}
-export_markers<-pouch_brk_markers_filtered %>% mutate(., gene = mapIds(
+export_markers<-pouch_brk_markers_filtered %>% mutate(., flybase = mapIds(
   org.Dm.eg.db,
   keys = rownames(.),
   column ="FLYBASE",
   keytype = "SYMBOL",
-  multiVals = "first"))
+  multiVals = "first")) %>% rownames_to_column(., var = "gene")
   
-write.table(export_markers, file="../pouch_brk_markers.csv", sep="," ) 
+write_csv(export_markers, file="../pouch_brk_markersh1.csv" ) 
+```
+
+```{r}
+saveRDS(d96_pouch, file = "../data/d96_pouch_h1.Rds") 
 ```
 

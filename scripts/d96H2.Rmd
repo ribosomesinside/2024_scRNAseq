@@ -488,5 +488,19 @@ gse <- gseGO(pouch_bi_markers_rank,
              minGSSize=3,
              pAdjustMethod = "BH")
 as.data.frame(gse) %>% as.tibble() -> gse_summary
-dotplot(gse, showCategory=15)
 ```
+```{r}
+export_markers<-pouch_brk_markers_filtered %>% mutate(., gene = mapIds(
+  org.Dm.eg.db,
+  keys = rownames(.),
+  column ="FLYBASE",
+  keytype = "SYMBOL",
+  multiVals = "first")) %>% rownames_to_column()
+  
+write_csv(export_markers, file="../pouch_brk_markersh2.csv") 
+```
+
+```{r}
+saveRDS(d96_pouch, file = "../data/d96_pouch_h2.Rds")
+```
+
