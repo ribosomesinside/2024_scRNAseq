@@ -1,0 +1,39 @@
+---
+title: "d96_merged"
+author: "Masha"
+date: "2025-02-27"
+output: html_document
+---
+
+```{r}
+d96_pouch_h1 <- readRDS(file = "../data/d96_pouch_h1.Rds")
+d96_pouch_h2 <- readRDS(file = "../data/d96_pouch_h2.Rds") 
+```
+
+```{r}
+merged_seurat <- merge(d96_pouch_h1, y = d96_pouch_h2, add.cell.ids = c("Rep1", "Rep2"), project = "Merged")
+DimPlot(d96_pouch_h1, reduction = "umap")
+DimPlot(d96_pouch_h2, reduction = "umap")
+
+```
+
+```{r}
+# Identify common features
+features <- SelectIntegrationFeatures(object.list = list(d96_pouch_h1, d96_pouch_h2))
+
+# Find integration anchors
+anchors <- FindIntegrationAnchors(object.list = list(d96_pouch_h1, d96_pouch_h2), anchor.features = features)
+
+# Integrate data
+integrated_seurat <- IntegrateData(anchorset = anchors)
+
+```
+```{r}
+integrated_seurat <- ScaleData(integrated_seurat) %>%
+                     RunPCA() %>%
+                     RunUMAP(dims = 1:30)
+```
+```{r}
+DimPlot(integrated_seurat, reduction="umap", group.by = "orig.ident")
+```
+
